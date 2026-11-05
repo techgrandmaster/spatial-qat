@@ -57,13 +57,18 @@ spatial-qat/
 │   └── schema.sql                  # Authoritative PostgreSQL 16 DDL
 ├── docs/
 │   ├── EVALUATION_REPORT.md        # Auto-generated metrics
-│   └── LIMITATIONS.md              # Known failure modes
-├── docker-compose.yml              # One-command local startup
+│   ├── LIMITATIONS.md              # Known failure modes
+│   ├── DEPLOYMENT.md               # Production deployment guide
+│   └── SUBMISSION_CHECKLIST.md     # Hackathon submission checklist
+├── docker-compose.yml              # Production: one-command startup
+├── docker-compose.dev.yml          # Development overrides (hot-reload)
 ├── .env.example
 └── README.md
 ```
 
 ## Quick Start
+
+### Production Deployment
 
 ```bash
 # 1. Copy environment variables
@@ -71,12 +76,23 @@ cp .env.example .env
 # Edit .env and set your MODEL_API_KEY
 
 # 2. Start all services
-docker compose up --build
+docker compose up --build -d
 
-# 3. Open the app
-# Frontend: http://localhost:3000
+# 3. Seed the demo board (pre-warms SHA-256 cache)
+cd backend && uv run python scripts/seed_demo.py
+
+# 4. Open the app
+# Frontend: http://localhost
 # Backend API: http://localhost:8000/docs
 ```
+
+### Development Mode (hot-reload)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for detailed deployment options, environment variables, and troubleshooting.
 
 ## Tech Stack
 
@@ -136,8 +152,10 @@ uv run ruff check .
 
 ## Documentation
 
+- [DEPLOYMENT.md](docs/DEPLOYMENT.md) — Production deployment guide, demo video script, and troubleshooting
 - [EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md) — Ablation & latency metrics
 - [LIMITATIONS.md](docs/LIMITATIONS.md) — Known failure modes
+- [SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md) — Hackathon submission checklist
 
 ## License
 

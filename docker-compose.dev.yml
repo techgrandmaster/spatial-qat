@@ -1,0 +1,26 @@
+version: "3.9"
+
+# Development overrides — compose with both files:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/spatial_qat
+      - MODEL_API_KEY=${MODEL_API_KEY}
+      - BUDGET_USD_HARD_CAP=${BUDGET_USD_HARD_CAP:-120.0}
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+    command: npm run dev -- --host
+    environment:
+      - API_URL=http://localhost:8000
