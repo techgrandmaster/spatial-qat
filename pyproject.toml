@@ -1,0 +1,38 @@
+[project]
+name = "spatial-qat"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Abiola Omolaja", email = "biolaomolaja@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+    "nltk>=3.10.4",
+    "pillow>=13.0.0",
+    "pydantic>=2.14.2",
+    "pydantic-settings>=2.16.2",
+    "pymupdf>=2.1",
+    "python-docx>=1.2.0",
+    "python-multipart>=0.0.33",
+    "shapely>=2.2.0",
+    "tenacity>=9.2.1",
+    "textblob>=0.20.1",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+spatial-qat = "spatial_qat:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
+]

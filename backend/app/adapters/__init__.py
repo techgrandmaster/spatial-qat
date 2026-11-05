@@ -1,0 +1,3 @@
+"""
+Meta Model API adapters.
+"""

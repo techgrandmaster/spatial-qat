@@ -1,0 +1,75 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+*.pyc
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv
+venv/
+env/
+
+# Environment variables (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# Product Requirements Document (internal reference)
+docs/PRD.md
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.lerna/cache
+.parcel-cache/
+
+# Frontend build outputs
+apps/web/dist/
+apps/web/build/
+
+# Docker
+.docker/
+
+# IDE & editor files
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.vscode-tasks/
+*.swp
+*.swo
+*~
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Alembic
+backend/alembic/versions/
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+.coverage.*
