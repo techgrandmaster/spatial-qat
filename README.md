@@ -56,7 +56,6 @@ spatial-qat/
 ├── db/
 │   └── schema.sql                  # Authoritative PostgreSQL 16 DDL
 ├── docs/
-│   ├── PRD.md                      # Product & Engineering Requirements
 │   ├── EVALUATION_REPORT.md        # Auto-generated metrics
 │   └── LIMITATIONS.md              # Known failure modes
 ├── docker-compose.yml              # One-command local startup
@@ -137,7 +136,6 @@ uv run ruff check .
 
 ## Documentation
 
-- [PRD.md](docs/PRD.md) — Full product & engineering requirements
 - [EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md) — Ablation & latency metrics
 - [LIMITATIONS.md](docs/LIMITATIONS.md) — Known failure modes
 
