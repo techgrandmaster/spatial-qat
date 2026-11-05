@@ -43,6 +43,7 @@ async def ingest_pdf(asset_id: UUID, workspace_id: UUID, db: AsyncSession) -> bo
     total_pages = len(doc)
     has_text = False
 
+    pages: list[DocumentPage] = []
     for page_idx in range(total_pages):
         page = doc[page_idx]
         text = page.get_text("text")
@@ -51,7 +52,7 @@ async def ingest_pdf(asset_id: UUID, workspace_id: UUID, db: AsyncSession) -> bo
         if text.strip():
             has_text = True
 
-        # Create document page record
+        # Create document page record (single flush later assigns all ids)
         doc_page = DocumentPage(
             asset_id=asset_id,
             workspace_id=workspace_id,
@@ -59,19 +60,14 @@ async def ingest_pdf(asset_id: UUID, workspace_id: UUID, db: AsyncSession) -> bo
             text_content=text,
         )
         db.add(doc_page)
-        await db.flush()
-        await db.refresh(doc_page)
+        pages.append((doc_page, text, page_number))
 
-        # Chunk the text
+    # One round-trip for all pages instead of N flush+refresh cycles.
+    await db.flush()
+    for doc_page, text, page_number in pages:
+        # Chunk the text with exact offsets (no repeated str.find scans).
         if text.strip():
-            chunks = _chunk_text(text)
-            for idx, chunk_text in enumerate(chunks):
-                # Find character offsets
-                char_start = text.find(chunk_text, idx * (CHUNK_SIZE + CHUNK_OVERLAP) if idx > 0 else 0)
-                if char_start == -1:
-                    char_start = idx * CHUNK_SIZE
-                char_end = char_start + len(chunk_text)
-
+            for idx, (chunk_text, char_start, char_end) in enumerate(_chunk_text_with_offsets(text)):
                 chunk = DocumentChunk(
                     page_id=doc_page.id,
                     asset_id=asset_id,
@@ -83,6 +79,8 @@ async def ingest_pdf(asset_id: UUID, workspace_id: UUID, db: AsyncSession) -> bo
                     text_content=chunk_text,
                 )
                 db.add(chunk)
+    # One round-trip for all chunks.
+    await db.flush()
 
     doc.close()
 
@@ -98,23 +96,41 @@ async def ingest_pdf(asset_id: UUID, workspace_id: UUID, db: AsyncSession) -> bo
 
 def _chunk_text(text: str) -> list[str]:
     """Split text into overlapping chunks of CHUNK_SIZE characters."""
-    chunks: list[str] = []
+    return [chunk for chunk, _, _ in _chunk_text_with_offsets(text)]
+
+
+def _chunk_text_with_offsets(text: str) -> list[tuple[str, int, int]]:
+    """Split text into overlapping chunks, tracking exact char offsets."""
+    chunks: list[tuple[str, int, int]] = []
     start = 0
-    while start < len(text):
-        end = start + CHUNK_SIZE
-        chunk = text[start:end].strip()
+    text_len = len(text)
+    while start < text_len:
+        end = min(start + CHUNK_SIZE, text_len)
+        raw = text[start:end]
+        chunk = raw.strip()
         if chunk:
-            chunks.append(chunk)
-        if end >= len(text):
+            # Adjust offsets for stripped whitespace without rescanning.
+            leading = len(raw) - len(raw.lstrip())
+            trailing = len(raw) - len(raw.rstrip())
+            chunks.append((chunk, start + leading, end - trailing))
+        if end >= text_len:
             break
         # Find a good break point (whitespace) near the end
         break_pos = text.rfind(" ", start + CHUNK_SIZE - CHUNK_OVERLAP, end)
-        if break_pos == -1:
+        if break_pos == -1 or break_pos <= start:
             break_pos = end
-        start = break_pos - CHUNK_OVERLAP
-        if start <= start - CHUNK_OVERLAP:
-            start = end - CHUNK_OVERLAP
-    return chunks if chunks else [text[:CHUNK_SIZE]]
+        new_start = break_pos - CHUNK_OVERLAP
+        if new_start <= start:
+            # Guarantee forward progress (fixes dead `start <= start - OVERLAP` branch).
+            new_start = end - CHUNK_OVERLAP
+        if new_start <= start:
+            new_start = start + max(CHUNK_SIZE - CHUNK_OVERLAP, 1)
+        start = new_start
+    if not chunks and text.strip():
+        stripped = text.strip()
+        leading = len(text) - len(text.lstrip())
+        return [(stripped, leading, leading + len(stripped))]
+    return chunks
 
 
 async def search_spec(document_asset_id: UUID, query: str, k: int = 5, db: AsyncSession | None = None):
@@ -132,26 +148,33 @@ async def search_spec(document_asset_id: UUID, query: str, k: int = 5, db: Async
 
 
 async def _search_spec_impl(document_asset_id: UUID, query: str, k: int, db: AsyncSession) -> list[dict]:
-    """Internal FTS search implementation."""
+    """Internal FTS search implementation (plain-English safe, bounded)."""
     from sqlalchemy import text as sql_text
 
-    # Search document_chunks using ts_rank_cd
+    cleaned = (query or "").strip()
+    if not cleaned:
+        return []
+    # Clamp top-k: prevents LIMIT injection / unbounded scans.
+    limit = max(1, min(int(k) if isinstance(k, int) else 5, 50))
+
+    # plainto_tsquery parses plain English (to_tsquery raised on unquoted text).
+    # tsv is GENERATED ALWAYS STORED (db/schema.sql), so no trigger is needed.
     search_sql = sql_text("""
         SELECT dc.id, dc.page_number, dc.chunk_index, dc.text_content,
                dp.id as page_id,
-               ts_rank_cd(dc.tsv, to_tsquery(:query)) as rank
+               ts_rank_cd(dc.tsv, plainto_tsquery('english', :query)) as rank
         FROM document_chunks dc
         JOIN document_pages dp ON dc.page_id = dp.id
         WHERE dc.asset_id = :asset_id
-          AND dc.tsv @@ to_tsquery(:query)
+          AND dc.tsv @@ plainto_tsquery('english', :query)
         ORDER BY rank DESC
         LIMIT :limit
     """)
 
     results = await db.execute(search_sql, {
         "asset_id": str(document_asset_id),
-        "query": query,
-        "limit": k,
+        "query": cleaned[:500],
+        "limit": limit,
     })
 
     snippets = []

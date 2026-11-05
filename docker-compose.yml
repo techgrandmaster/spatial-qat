@@ -28,11 +28,15 @@ services:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/spatial_qat
       - MODEL_API_KEY=${MODEL_API_KEY}
       - BUDGET_USD_HARD_CAP=${BUDGET_USD_HARD_CAP:-120.0}
+      - MAX_IMAGE_SIZE_MB=${MAX_IMAGE_SIZE_MB:-10}
+      - MAX_PDF_SIZE_MB=${MAX_PDF_SIZE_MB:-20}
+      - MAX_AUDIO_SIZE_MB=${MAX_AUDIO_SIZE_MB:-10}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - ./data:/data
+      - ./data:/app/data
     # Override to dev mode when needed: docker compose up --build backend
     # Production uses CMD from Dockerfile (4 workers, no reload)
 
@@ -40,10 +44,11 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
+      args:
+        # Empty = same-origin /api (nginx proxies to backend:8000).
+        - VITE_API_URL=${VITE_API_URL:-}
     ports:
       - "80:80"
-    environment:
-      - API_URL=http://backend:8000
     depends_on:
       - backend
 

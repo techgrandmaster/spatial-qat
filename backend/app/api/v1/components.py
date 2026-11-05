@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_session_id, load_owned_workspace
 from app.db import get_db
-from app.models.orm import Component, ComponentEvidence
+from app.models.orm import Component, ComponentEdge, ComponentEvidence
 from app.models.schemas import (
     ComponentEvidenceDTO,
     ComponentResponse,
@@ -58,8 +59,12 @@ def _component_to_response(comp: Component) -> ComponentResponse:
 
 
 @router.get("/{component_id}", response_model=ComponentResponse)
-async def get_component(component_id: str, db: AsyncSession = Depends(get_db)):
-    """Get a component by ID."""
+async def get_component(
+    component_id: str,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a component by ID (owner only; 404 missing, 403 foreign)."""
     try:
         cid = UUID(component_id)
     except ValueError as exc:
@@ -70,13 +75,20 @@ async def get_component(component_id: str, db: AsyncSession = Depends(get_db)):
     comp = result.scalar_one_or_none()
     if comp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Component not found")
+
+    await load_owned_workspace(str(comp.workspace_id), session_id, db)
 
     return _component_to_response(comp)
 
 
 @router.patch("/{component_id}", response_model=ComponentResponse)
-async def update_component(component_id: str, body: ComponentUpdate, db: AsyncSession = Depends(get_db)):
-    """Confirm, rename, or reject a proposed component mapping."""
+async def update_component(
+    component_id: str,
+    body: ComponentUpdate,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm, rename, or reject a proposed component mapping (owner only)."""
     try:
         cid = UUID(component_id)
     except ValueError as exc:
@@ -87,6 +99,8 @@ async def update_component(component_id: str, body: ComponentUpdate, db: AsyncSe
     comp = result.scalar_one_or_none()
     if comp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Component not found")
+
+    await load_owned_workspace(str(comp.workspace_id), session_id, db)
 
     if body.label is not None:
         comp.label = body.label
@@ -112,9 +126,10 @@ async def add_evidence(
     chunk_id: str | None = None,
     quoted_text: str = "",
     relation_type: str = "specification",
+    session_id: UUID = Depends(get_session_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Link or verify datasheet chunk evidence for a component."""
+    """Link or verify datasheet chunk evidence for a component (owner only)."""
     try:
         cid = UUID(component_id)
         pid = UUID(page_id)
@@ -123,8 +138,11 @@ async def add_evidence(
 
     comp_stmt = select(Component).where(Component.id == cid)
     comp_result = await db.execute(comp_stmt)
-    if comp_result.scalar_one_or_none() is None:
+    comp = comp_result.scalar_one_or_none()
+    if comp is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Component not found")
+
+    await load_owned_workspace(str(comp.workspace_id), session_id, db)
 
     evidence = ComponentEvidence(
         component_id=cid,
@@ -140,3 +158,89 @@ async def add_evidence(
     await db.refresh(evidence)
 
     return {"id": str(evidence.id), "component_id": str(evidence.component_id)}
+
+
+@router.post("/{component_id}/edges")
+async def create_edge(
+    component_id: str,
+    dst_component_id: str,
+    relation_type: str = "connected_to",
+    evidence_page_id: str | None = None,
+    evidence_quote: str | None = None,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a directed edge src -> dst with optional datasheet evidence (FR-12, P1)."""
+    try:
+        src_id = UUID(component_id)
+        dst_id = UUID(dst_component_id)
+        ev_page = UUID(evidence_page_id) if evidence_page_id else None
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
+
+    src_stmt = select(Component).where(Component.id == src_id)
+    src = (await db.execute(src_stmt)).scalar_one_or_none()
+    if src is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Component not found")
+    await load_owned_workspace(str(src.workspace_id), session_id, db)
+
+    dst_stmt = select(Component).where(Component.id == dst_id)
+    dst = (await db.execute(dst_stmt)).scalar_one_or_none()
+    if dst is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target component not found")
+    if dst.workspace_id != src.workspace_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Components must share a workspace")
+
+    edge = ComponentEdge(
+        workspace_id=src.workspace_id,
+        src_component_id=src_id,
+        dst_component_id=dst_id,
+        relation_type=relation_type,
+        evidence_page_id=ev_page,
+        evidence_quote=evidence_quote,
+        verification_status="proposed",
+    )
+    db.add(edge)
+    await db.flush()
+    await db.refresh(edge)
+
+    return {
+        "id": str(edge.id),
+        "src_component_id": str(edge.src_component_id),
+        "dst_component_id": str(edge.dst_component_id),
+        "relation_type": edge.relation_type,
+    }
+
+
+@router.get("/{component_id}/edges")
+async def list_edges(
+    component_id: str,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List outgoing edges for a component (owner only, FR-12)."""
+    try:
+        cid = UUID(component_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
+
+    comp_stmt = select(Component).where(Component.id == cid)
+    comp = (await db.execute(comp_stmt)).scalar_one_or_none()
+    if comp is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Component not found")
+    await load_owned_workspace(str(comp.workspace_id), session_id, db)
+
+    edge_stmt = select(ComponentEdge).where(
+        (ComponentEdge.src_component_id == cid) | (ComponentEdge.dst_component_id == cid)
+    )
+    edges = (await db.execute(edge_stmt)).scalars().all()
+    return [
+        {
+            "id": str(e.id),
+            "src_component_id": str(e.src_component_id),
+            "dst_component_id": str(e.dst_component_id),
+            "relation_type": e.relation_type,
+            "verification_status": e.verification_status,
+        }
+        for e in edges
+    ]

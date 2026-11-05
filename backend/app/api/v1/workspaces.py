@@ -3,13 +3,15 @@ Workspaces router: CRUD for isolated board workspaces.
 """
 
 import logging
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.api.deps import get_session_id, load_owned_workspace
+from app.config import settings
 from app.db import get_db
 from app.models.orm import Asset, Component, Workspace
 from app.models.schemas import (
@@ -110,16 +112,20 @@ async def _workspace_to_dto(workspace: Workspace, db: AsyncSession) -> Workspace
         assets=assets,
         components=components,
         budget_spent_usd=budget_spent,
-        budget_cap_usd=120.0,
+        budget_cap_usd=settings.budget_usd_hard_cap,
         created_at=workspace.created_at,
     )
 
 
 @router.post("", response_model=WorkspaceResponse)
-async def create_workspace(body: WorkspaceCreate, db: AsyncSession = Depends(get_db)):
+async def create_workspace(
+    body: WorkspaceCreate,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
     """Create an isolated board workspace."""
     # For now, create with a placeholder session; in production, verify bearer token
-    guest_session_id = uuid4()
+    guest_session_id = session_id
 
     workspace = Workspace(
         guest_session_id=guest_session_id,
@@ -135,12 +141,14 @@ async def create_workspace(body: WorkspaceCreate, db: AsyncSession = Depends(get
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
-async def get_workspace(workspace_id: str, db: AsyncSession = Depends(get_db)):
-    """Retrieve a workspace with assets and components."""
-    try:
-        wid = UUID(workspace_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
+async def get_workspace(
+    workspace_id: str,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Retrieve a workspace with assets and components (owner only)."""
+    workspace_ref = await load_owned_workspace(workspace_id, session_id, db)
+    wid = workspace_ref.id
 
     stmt = (
         select(Workspace)

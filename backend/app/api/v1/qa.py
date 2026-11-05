@@ -5,15 +5,16 @@ Q&A router: submit text queries, execute agent loop, return structured answers.
 import uuid
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, WebSocket, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.meta.voice import MuseVoiceAdapter
 from app.agent.loop import AgentToolRegistry, run_agent_loop, run_analyze_pipeline
 from app.agent.tools import build_tool_registry
+from app.api.deps import get_session_id, load_owned_workspace
 from app.db import get_db
-from app.models.orm import AgentRun, Asset, Message, Workspace
+from app.models.orm import AgentRun, Asset, Message
 from app.models.schemas import (
     AnswerPayload,
     QuestionRequest,
@@ -28,19 +29,12 @@ router = APIRouter()
 async def ask_question(
     workspace_id: str,
     body: QuestionRequest,
+    session_id: UUID = Depends(get_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Submit a text query; executes the agent loop and returns run_id / structured AnswerPayload."""
-    try:
-        wid = UUID(workspace_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
-
-    # Verify workspace
-    ws_stmt = select(Workspace).where(Workspace.id == wid)
-    ws_result = await db.execute(ws_stmt)
-    if ws_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    workspace = await load_owned_workspace(workspace_id, session_id, db)
+    wid = workspace.id
 
     # Build tool registry
     tool_registry = AgentToolRegistry()
@@ -92,16 +86,20 @@ async def ask_question(
 async def voice_question(
     workspace_id: str,
     audio: UploadFile,
+    session_id: UUID = Depends(get_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload push-to-talk audio; transcribes via muse-voice-transcribe-1.0 and triggers grounded Q&A."""
-    try:
-        wid = UUID(workspace_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
+    workspace = await load_owned_workspace(workspace_id, session_id, db)
+    wid = workspace.id
 
-    # Transcribe audio
-    audio_data = await audio.read()
+    # Transcribe audio (streamed with an early cap, not unbounded buffering).
+    from app.api.v1.assets import _read_upload_capped
+    from app.config import settings as _settings
+
+    audio_data = await _read_upload_capped(
+        audio, _settings.max_audio_size_mb * 1024 * 1024
+    )
     voice_adapter = MuseVoiceAdapter()
     transcript = await voice_adapter.transcribe(audio_data, audio.content_type or "audio/webm")
 
@@ -154,13 +152,12 @@ async def voice_question(
 @router.post("/workspaces/{workspace_id}/analyze", response_model=RunResponse)
 async def analyze_board(
     workspace_id: str,
+    session_id: UUID = Depends(get_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger full board analysis (muse-spark-1.3 proposal → parallel sam-3.1 → SoM grounding)."""
-    try:
-        wid = UUID(workspace_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
+    workspace = await load_owned_workspace(workspace_id, session_id, db)
+    wid = workspace.id
 
     # Find image and PDF assets
     assets_stmt = select(Asset).where(Asset.workspace_id == wid)
@@ -219,17 +216,15 @@ async def segment_point(
     x: float,
     y: float,
     label: str | None = None,
+    session_id: UUID = Depends(get_session_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger on-demand sam-3.1 point/box prompt segmentation (P1)."""
     from app.adapters.meta.sam import SamAdapter
     from app.models.orm import Component
-    from app.services.som_tagger import compute_centroid
 
-    try:
-        wid = UUID(workspace_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
+    workspace = await load_owned_workspace(workspace_id, session_id, db)
+    wid = workspace.id
 
     # Find image asset
     assets_stmt = select(Asset).where(Asset.workspace_id == wid)
@@ -240,27 +235,31 @@ async def segment_point(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No board image found")
 
     sam = SamAdapter()
-    image_url = f"/api/v1/assets/{image_asset.id}/content"
+    from app.config import settings as _settings
+
+    image_url = f"{_settings.public_base_url.rstrip()}/api/v1/assets/{image_asset.id}/content"
     points = [{"x": x, "y": y, "positive": True}]
     result = await sam.segment_point(image_url, points, label=label, workspace_id=wid, db=db)
 
     polygons = result.get("polygons", [])
     if polygons:
-        centroid = compute_centroid(polygons)
+        from app.agent.loop import _area_fraction_from_polygons, _bbox_from_polygons
+
+        bbox_x, bbox_y, bbox_w, bbox_h = _bbox_from_polygons(polygons)
         comp = Component(
             workspace_id=wid,
             image_asset_id=image_asset.id,
             label=label or f"Point segment at ({x:.2f}, {y:.2f})",
             noun_phrase=label or "point-segmented object",
             category="other",
-            bbox_x=centroid[0] - 0.05,
-            bbox_y=centroid[1] - 0.05,
-            bbox_w=0.1,
-            bbox_h=0.1,
-            bbox={"x": centroid[0] - 0.05, "y": centroid[1] - 0.05, "w": 0.1, "h": 0.1},
+            bbox_x=bbox_x,
+            bbox_y=bbox_y,
+            bbox_w=bbox_w,
+            bbox_h=bbox_h,
+            bbox={"x": bbox_x, "y": bbox_y, "w": bbox_w, "h": bbox_h},
             polygons=polygons,
-            area_fraction=0.01,
-            confidence=0.7,
+            area_fraction=_area_fraction_from_polygons(polygons, bbox_w * bbox_h),
+            confidence=float(result.get("confidence", 0.7) or 0.7),
             identity_source="point_prompt",
             verification_status="proposed",
         )
@@ -278,3 +277,98 @@ async def segment_point(
             uncertainty=UncertaintyLevel.LOW,
         ),
     )
+
+
+@router.post("/workspaces/{workspace_id}/illustrations")
+async def generate_fix_illustration(
+    workspace_id: str,
+    prompt: str,
+    source_asset_id: str | None = None,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a labeled illustrative fix image via muse-image-1.0 (P2, FR-13).
+
+    Output is always marked illustrative and never used as a component mask.
+    """
+    from app.adapters.meta.image import MuseImageAdapter
+
+    workspace = await load_owned_workspace(workspace_id, session_id, db)
+
+    source_url: str | None = None
+    if source_asset_id is not None:
+        try:
+            sid = UUID(source_asset_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
+        stmt = select(Asset).where(Asset.id == sid, Asset.workspace_id == workspace.id)
+        result = await db.execute(stmt)
+        asset = result.scalar_one_or_none()
+        if asset is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source asset not found")
+        from app.config import settings as _settings
+
+        source_url = f"{_settings.public_base_url.rstrip()}/api/v1/assets/{asset.id}/content"
+
+    adapter = MuseImageAdapter()
+    try:
+        illustration = await adapter.generate_illustration(prompt, source_url)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Image generation failed: {exc}"
+        ) from exc
+    return illustration
+
+
+@router.websocket("/workspaces/{workspace_id}/voice-stream")
+async def voice_stream(websocket: WebSocket, workspace_id: str):
+    """Realtime push-to-talk proxy (P2): binary audio frames in, transcript text out.
+
+    Best-effort streaming wrapper over muse-voice-transcribe-1.0: each binary
+    message is transcribed and the text is sent back. Authentication uses the
+    `token` query parameter (the guest Bearer value) since browsers cannot set
+    WebSocket Authorization headers.
+    """
+    from fastapi import WebSocketDisconnect
+
+    from app.api.v1.sessions import verify_session_token
+    from app.db import async_session_factory
+
+    await websocket.accept()
+    try:
+        raw_token = websocket.query_params.get("token", "")
+        async with async_session_factory() as db:
+            session_id = await verify_session_token(raw_token, db)
+            if session_id is None:
+                await websocket.send_json({"error": "invalid or expired session"})
+                return
+            workspace = await load_owned_workspace(workspace_id, session_id, db)
+        adapter = MuseVoiceAdapter()
+        while True:
+            try:
+                message = await websocket.receive()
+            except WebSocketDisconnect:
+                break
+            data = message.get("bytes")
+            if data is None:
+                text = message.get("text")
+                if text in (None, "close"):
+                    break
+                await websocket.send_json({"error": "binary audio frames expected"})
+                continue
+            if len(data) > 10 * 1024 * 1024:
+                await websocket.send_json({"error": "audio frame exceeds 10MB"})
+                continue
+            try:
+                transcript = await adapter.transcribe(bytes(data), "audio/webm")
+            except Exception as exc:
+                await websocket.send_json({"error": f"transcription failed: {exc}"})
+                continue
+            await websocket.send_json(
+                {"workspace_id": str(workspace.id), "transcript": transcript}
+            )
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass

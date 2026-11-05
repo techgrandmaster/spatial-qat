@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from app.api.deps import get_session_id, load_owned_workspace
 from app.db import get_db
 from app.models.orm import AgentRun, AgentStep
 from app.models.schemas import AgentRunTraceDTO, AgentStepDTO
@@ -24,17 +25,52 @@ run_events: dict[str, list[dict]] = {}
 
 
 @router.get("/{run_id}/events")
-async def stream_run_events(run_id: str):
+async def stream_run_events(
+    run_id: str,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
     """SSE Stream: Emits run.started, step.started, tool.called, tool.result,
-    component.found, message.delta, answer.final, run.completed, run.failed."""
-    async def event_generator():
+    component.found, message.delta, answer.final, run.completed, run.failed.
+
+    Primary source is the persisted agent_runs row (works across workers);
+    the in-memory dict is a fallback for runs that have not flushed yet.
+    """
+    try:
+        rid = UUID(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid UUID") from exc
+
+    events: list[dict] = []
+    stmt = select(AgentRun).where(AgentRun.id == rid)
+    result = await db.execute(stmt)
+    run = result.scalar_one_or_none()
+    if run is not None:
+        await load_owned_workspace(str(run.workspace_id), session_id, db)
+        totals = run.totals or {}
+        stored = totals.get("sse_events")
+        if isinstance(stored, list):
+            events = stored
+    if not events:
         events = run_events.get(run_id, [])
+
+    async def event_generator():
         for event in events:
-            yield {
-                "event": event.get("event", "message"),
-                "data": json.dumps(event.get("payload", {})),
-                "id": str(event.get("seq", 0)),
-            }
+            if isinstance(event, dict):
+                yield {
+                    "event": str(event.get("event", "message")),
+                    "data": json.dumps(event.get("payload", {})),
+                    "id": str(event.get("seq", 0)),
+                }
+            else:
+                seq = getattr(event, "seq", 0)
+                name = getattr(event, "event", "message")
+                name = name.value if hasattr(name, "value") else str(name)
+                yield {
+                    "event": name,
+                    "data": json.dumps(getattr(event, "payload", {})),
+                    "id": str(seq),
+                }
         # Signal end of stream
         yield {"event": "end", "data": json.dumps({"status": "complete"})}
 
@@ -42,8 +78,12 @@ async def stream_run_events(run_id: str):
 
 
 @router.get("/{run_id}/trace", response_model=AgentRunTraceDTO)
-async def get_run_trace(run_id: str, db: AsyncSession = Depends(get_db)):
-    """Get the complete trace of an agent run."""
+async def get_run_trace(
+    run_id: str,
+    session_id: UUID = Depends(get_session_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the complete trace of an agent run (owner only)."""
     try:
         rid = UUID(run_id)
     except ValueError as exc:
@@ -54,6 +94,8 @@ async def get_run_trace(run_id: str, db: AsyncSession = Depends(get_db)):
     run = result.scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+
+    await load_owned_workspace(str(run.workspace_id), session_id, db)
 
     # Fetch steps
     steps_stmt = select(AgentStep).where(AgentStep.run_id == rid).order_by(AgentStep.seq)

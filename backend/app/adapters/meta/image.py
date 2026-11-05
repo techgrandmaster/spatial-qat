@@ -6,8 +6,7 @@ Strictly for separately labeled conceptual illustrations.
 
 import logging
 
-import httpx
-
+from app.adapters.meta.http import get_shared_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -41,14 +40,14 @@ class MuseImageAdapter:
             "input_image": source_image_url,
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                url,
-                json=payload,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        client = get_shared_client(timeout=60.0)
+        resp = await client.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         return {
             "image_url": data.get("url", ""),

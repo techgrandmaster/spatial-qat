@@ -15,13 +15,16 @@ Part B: Grounded Conceptual Grading
 - Post-submission reveal of hidden target
 """
 
+import asyncio
 import io
 import logging
 import math
+from pathlib import Path
 from uuid import UUID
 
 from PIL import Image
 from shapely.geometry import Point, Polygon
+from shapely.prepared import prep
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +34,51 @@ from app.models.schemas import ConceptualStatus
 logger = logging.getLogger(__name__)
 
 NEAR_MISS_THRESHOLD = 0.02  # 2% of image diagonal
+
+
+def _polygon_from_ring(outer_ring) -> Polygon | None:
+    """Build a Shapely polygon from a normalized ring. Returns None if invalid."""
+    if not outer_ring or len(outer_ring) < 3:
+        return None
+    try:
+        coords = [(c[0], c[1]) for c in outer_ring]
+        poly = Polygon(coords)
+        if poly.is_empty:
+            return None
+        return poly
+    except Exception:
+        return None
+
+
+def _prepare_polygons(polygons: list) -> list[Polygon]:
+    """Build Polygon objects once from normalized rings (outer ring only, legacy)."""
+    prepared: list[Polygon] = []
+    for poly_with_holes in polygons or []:
+        if not poly_with_holes:
+            continue
+        poly = _polygon_from_ring(poly_with_holes[0])
+        if poly is not None:
+            prepared.append(poly)
+    return prepared
+
+
+def _prepare_pixel_polygons(polygons: list, width_px: int, height_px: int) -> list[Polygon]:
+    """Build Polygon objects in pixel space for diagonal-normalized distance."""
+    prepared: list[Polygon] = []
+    for poly_with_holes in polygons or []:
+        if not poly_with_holes:
+            continue
+        outer = poly_with_holes[0]
+        if not outer or len(outer) < 3:
+            continue
+        try:
+            coords = [(c[0] * width_px, c[1] * height_px) for c in outer]
+            poly = Polygon(coords)
+            if not poly.is_empty:
+                prepared.append(poly)
+        except Exception:
+            continue
+    return prepared
 
 
 def normalize_click(click_x: float, click_y: float, width_px: int, height_px: int) -> tuple[int, int]:
@@ -43,6 +91,16 @@ def normalize_click(click_x: float, click_y: float, width_px: int, height_px: in
 def compute_diagonal(width_px: int, height_px: int) -> float:
     """Compute image diagonal in pixels."""
     return math.sqrt(width_px ** 2 + height_px ** 2)
+
+
+def _read_mask_bytes(mask_path: Path) -> bytes | None:
+    """Blocking mask read isolated for asyncio.to_thread (keeps loop responsive)."""
+    try:
+        if not mask_path.exists():
+            return None
+        return mask_path.read_bytes()
+    except Exception:
+        return None
 
 
 def hit_test_mask(mask_data: bytes, px: int, py: int, width_px: int, height_px: int) -> bool:
@@ -68,17 +126,13 @@ def hit_test_polygon(polygons: list, click_x: float, click_y: float) -> bool:
     Hit-test using Shapely polygon geometry.
     Polygons are normalized [0,1] coordinate rings.
     """
+    prepared = _prepare_polygons(polygons)
+    if not prepared:
+        return False
     point = Point(click_x, click_y)
-    for poly_with_holes in polygons:
-        if not poly_with_holes:
-            continue
-        outer_ring = poly_with_holes[0]
-        if len(outer_ring) < 3:
-            continue
+    for polygon in prepared:
         try:
-            coords = [(c[0], c[1]) for c in outer_ring]
-            polygon = Polygon(coords)
-            if polygon.contains(point):
+            if prep(polygon).contains(point):
                 return True
         except Exception:
             continue
@@ -87,22 +141,44 @@ def hit_test_polygon(polygons: list, click_x: float, click_y: float) -> bool:
 
 def compute_distance_to_polygon(click_x: float, click_y: float, polygons: list) -> float:
     """Compute minimum normalized distance from click to target polygon boundary."""
+    prepared = _prepare_polygons(polygons)
+    if not prepared:
+        return 1.0  # Max normalized distance
     point = Point(click_x, click_y)
-    min_dist = 1.0  # Max normalized distance
-    for poly_with_holes in polygons:
-        if not poly_with_holes:
-            continue
-        outer_ring = poly_with_holes[0]
-        if len(outer_ring) < 3:
-            continue
+    min_dist = 1.0
+    for polygon in prepared:
         try:
-            coords = [(c[0], c[1]) for c in outer_ring]
-            polygon = Polygon(coords)
-            dist = polygon.exterior.distance(point)
-            min_dist = min(min_dist, dist)
+            min_dist = min(min_dist, polygon.exterior.distance(point))
         except Exception:
             continue
     return min_dist
+
+
+def compute_pixel_distance_ratio(
+    click_x: float,
+    click_y: float,
+    polygons: list,
+    width_px: int,
+    height_px: int,
+) -> float:
+    """PRD §10A: pixel distance to target divided by image diagonal."""
+    pixel_polys = _prepare_pixel_polygons(polygons, width_px, height_px)
+    if not pixel_polys:
+        return 1.0
+    diagonal = math.sqrt(width_px**2 + height_px**2)
+    if diagonal <= 0:
+        return 1.0
+    point = Point(click_x * width_px, click_y * height_px)
+    min_dist = min(p.exterior.distance(point) for p in pixel_polys)
+    # Interior clicks: exterior distance > 0 but hit-test already passed;
+    # report 0.0 so near_miss stays False and distance reflects a hit.
+    for p in pixel_polys:
+        try:
+            if prep(p).contains(point):
+                return 0.0
+        except Exception:
+            continue
+    return min_dist / diagonal
 
 
 def resolve_clicked_component(
@@ -118,17 +194,10 @@ def resolve_clicked_component(
     candidates = []
 
     for comp in components:
-        polygons = comp.get("polygons", [])
-        for poly_with_holes in polygons:
-            if not poly_with_holes:
-                continue
-            outer_ring = poly_with_holes[0]
-            if len(outer_ring) < 3:
-                continue
+        prepared = _prepare_polygons(comp.get("polygons", []))
+        for polygon in prepared:
             try:
-                coords = [(c[0], c[1]) for c in outer_ring]
-                polygon = Polygon(coords)
-                if polygon.contains(point):
+                if prep(polygon).contains(point):
                     candidates.append(comp)
                     break
             except Exception:
@@ -181,37 +250,34 @@ async def grade_spatial_attempt(
     # Convert to pixel coords
     px, py = normalize_click(click_x, click_y, width_px, height_px)
 
-    # Hit-test using Shapely polygon
-    spatial_hit = hit_test_polygon(
-        target_component.polygons or [],
-        click_x,
-        click_y,
-    )
+    # Single preparation of target geometry: hit-test (normalized) +
+    # PRD §10A near-miss distance (pixel/diagonal) share the same parse.
+    target_polys = target_component.polygons or []
+    spatial_hit = hit_test_polygon(target_polys, click_x, click_y)
 
-    # Also try mask hit-test if mask_asset_id is available
-    if not spatial_hit and target_component.mask_asset_id:
+    # Also try mask hit-test if mask_asset_id is available (off event loop).
+    if not spatial_hit and target_component.mask_asset_id and db is not None:
         mask_stmt = select(Asset).where(Asset.id == target_component.mask_asset_id)
-        if db:
-            mask_result = await db.execute(mask_stmt)
-            mask_asset = mask_result.scalar_one_or_none()
-        else:
-            mask_asset = None
+        mask_result = await db.execute(mask_stmt)
+        mask_asset = mask_result.scalar_one_or_none()
 
-        if mask_asset:
+        if mask_asset is not None:
             from app.api.v1.assets import STORAGE_DIR
 
             mask_path = STORAGE_DIR / mask_asset.storage_key
-            if mask_path.exists():
-                mask_data = mask_path.read_bytes()
-                spatial_hit = hit_test_mask(mask_data, px, py, width_px, height_px)
+            mask_data = await asyncio.to_thread(_read_mask_bytes, mask_path)
+            if mask_data is not None:
+                spatial_hit = await asyncio.to_thread(
+                    hit_test_mask, mask_data, px, py, width_px, height_px
+                )
 
-    # Near-miss distance
-    distance_norm = compute_distance_to_polygon(
-        click_x, click_y, target_component.polygons or []
+    # Near-miss distance in pixel/diagonal units (correct for non-square).
+    distance_norm = compute_pixel_distance_ratio(
+        click_x, click_y, target_polys, width_px, height_px
     )
     near_miss = not spatial_hit and (distance_norm <= NEAR_MISS_THRESHOLD)
 
-    # Resolve clicked component
+    # Resolve clicked component (target excluded, single prepared pass).
     clicked_comp = None
     comp_dicts = [
         {
@@ -226,6 +292,19 @@ async def grade_spatial_attempt(
     if comp_dicts:
         clicked_comp = resolve_clicked_component(click_x, click_y, comp_dicts)
 
+    # Overlap ambiguity: >=2 components (including the target) contain the click.
+    containing = 0
+    _pt = Point(click_x, click_y)
+    for c in all_components:
+        for poly in _prepare_polygons(c.polygons or []):
+            try:
+                if prep(poly).contains(_pt):
+                    containing += 1
+                    break
+            except Exception:
+                continue
+    overlap_ambiguous = containing >= 2
+
     # Compute score
     spatial_score = compute_spatial_score(spatial_hit, near_miss, hints_used)
 
@@ -234,7 +313,7 @@ async def grade_spatial_attempt(
         "near_miss": near_miss,
         "distance_norm": round(distance_norm, 6),
         "clicked_component_id": clicked_comp["id"] if clicked_comp else None,
-        "overlap_ambiguous": False,
+        "overlap_ambiguous": overlap_ambiguous,
         "spatial_score": round(spatial_score, 4),
     }
 
@@ -266,36 +345,14 @@ async def grade_conceptual_explanation(
         grade_result = await adapter.grade_explanation(explanation, rubric, workspace_id, db)
         return grade_result
     except Exception as exc:
-        logger.warning("Conceptual grading failed, using fallback: %s", exc)
-
-    # Fallback: simple keyword matching
-    expected = rubric.get("expected_concepts", [])
-    explanation_lower = explanation.lower()
-    matched = [c for c in expected if c.lower() in explanation_lower]
-    missing = [c for c in expected if c.lower() not in explanation_lower]
-
-    if expected:
-        score = len(matched) / len(expected)
-    else:
-        score = 0.5
-
-    # Negation guardrail
-    negation_words = {"not", "no", "never", "none", "neither", "cannot", "doesn't", "isn't"}
-    has_negation = any(w in explanation_lower for w in negation_words)
-    sentiment_aligned = not has_negation if matched else None
-
-    feedback_parts = []
-    if matched:
-        feedback_parts.append(f"Correctly mentioned: {', '.join(matched)}.")
-    if missing:
-        feedback_parts.append(f"Missing concepts: {', '.join(missing)}.")
-    if not feedback_parts:
-        feedback_parts.append("Explanation reviewed.")
-
-    return {
-        "conceptual_status": ConceptualStatus.GRADED.value,
-        "conceptual_score": round(score, 4),
-        "sentiment_aligned": sentiment_aligned,
-        "feedback_text": " ".join(feedback_parts),
-        "citations": [],
-    }
+        # PRD §10B: provider errors yield not_graded — never a fabricated score.
+        # (The old keyword-overlap fallback with substring negation is removed:
+        # it graded provider failures and matched "no" inside "node".)
+        logger.warning("Conceptual grading failed: %s", exc)
+        return {
+            "conceptual_status": ConceptualStatus.NOT_GRADED.value,
+            "conceptual_score": None,
+            "sentiment_aligned": None,
+            "feedback_text": "Conceptual grading unavailable (provider error).",
+            "citations": [],
+        }

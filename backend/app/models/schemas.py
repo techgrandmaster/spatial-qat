@@ -691,6 +691,9 @@ class AssessmentAttemptRequest(BaseModel):
     explanation: str | None = Field(default=None, max_length=1500)
     hints_used: int = Field(default=0, ge=0, le=5)
     learner_session_id: UUID | None = None
+    assessment_item_id: UUID | None = Field(
+        default=None, description="Target item; defaults to the first item when omitted"
+    )
 
 
 class AssessmentAttemptResponse(BaseModel):

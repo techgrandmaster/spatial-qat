@@ -4,12 +4,12 @@ Unit tests for geometric grading service.
 2% diagonal near-miss math, smallest-area overlap resolution, and score deduction formulas.
 """
 
-import pytest
-
 from app.services.grading import (
     compute_diagonal,
-    compute_spatial_score,
     compute_distance_to_polygon,
+    compute_spatial_score,
+    grade_conceptual_explanation,
+    grade_spatial_attempt,
     hit_test_polygon,
     normalize_click,
     resolve_clicked_component,
@@ -211,3 +211,69 @@ class TestResolveClickedComponent:
     def test_empty_components(self):
         result = resolve_clicked_component(0.5, 0.5, [])
         assert result is None
+
+
+def _fake_comp(cid, polygons, area=0.04, conf=0.9, mask_id=None):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        id=cid, polygons=polygons, area_fraction=area, confidence=conf, mask_asset_id=mask_id
+    )
+
+
+def _fake_image(w=1000, h=1000):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(width_px=w, height_px=h)
+
+
+class TestOverlapAmbiguous:
+    """S8: overlap_ambiguous is True only when >=2 components contain the click."""
+
+    def test_single_container_not_ambiguous(self):
+        import uuid
+
+        sq = [[[[0.2, 0.2], [0.4, 0.2], [0.4, 0.4], [0.2, 0.4], [0.2, 0.2]]]]
+        far = [[[[0.7, 0.7], [0.9, 0.7], [0.9, 0.9], [0.7, 0.9], [0.7, 0.7]]]]
+        target = _fake_comp(uuid.uuid4(), sq)
+        other = _fake_comp(uuid.uuid4(), far)
+        import asyncio
+
+        out = asyncio.run(grade_spatial_attempt(
+            0.3, 0.3, target, _fake_image(), [target, other], hints_used=0, db=None
+        ))
+        assert out["spatial_hit"] is True
+        assert out["overlap_ambiguous"] is False
+
+    def test_two_containers_ambiguous(self):
+        import asyncio
+        import uuid
+
+        big = [[[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]]]]
+        small = [[[[0.2, 0.2], [0.4, 0.2], [0.4, 0.4], [0.2, 0.4], [0.2, 0.2]]]]
+        target = _fake_comp(uuid.uuid4(), small)
+        other = _fake_comp(uuid.uuid4(), big, area=1.0)
+        out = asyncio.run(grade_spatial_attempt(
+            0.3, 0.3, target, _fake_image(), [target, other], hints_used=0, db=None
+        ))
+        assert out["spatial_hit"] is True
+        assert out["overlap_ambiguous"] is True
+
+
+class TestConceptualProviderError:
+    """S8 / PRD §10B: provider errors yield not_graded, never a score."""
+
+    def test_provider_error_is_not_graded(self):
+        import asyncio
+        import uuid
+        from unittest.mock import AsyncMock, patch
+
+        from app.adapters.meta.spark import MuseSparkAdapter
+
+        with patch.object(MuseSparkAdapter, "grade_explanation", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            out = asyncio.run(grade_conceptual_explanation(
+                "the regulator outputs 3.3V", {"expected_concepts": ["regulator"]},
+                uuid.uuid4(), db=None,
+            ))
+        assert out["conceptual_status"] == "not_graded"
+        assert out["conceptual_score"] is None

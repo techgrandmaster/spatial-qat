@@ -72,6 +72,11 @@ After seeding, the demo board works entirely from cache — no live API calls ne
 | `MAX_SAM_CONCURRENCY` | No | `4` | Parallel SAM segmentation limit |
 | `AGENT_MAX_STEPS` | No | `8` | Agent loop step ceiling |
 | `AGENT_TIMEOUT_SECONDS` | No | `90` | Agent loop wall-clock timeout |
+| `MAX_IMAGE_SIZE_MB` | No | `10` | Board image upload cap |
+| `MAX_PDF_SIZE_MB` | No | `20` | Datasheet PDF upload cap |
+| `MAX_AUDIO_SIZE_MB` | No | `10` | Voice clip upload cap |
+| `PUBLIC_BASE_URL` | No | `http://localhost:8000` | Public backend origin for absolute asset URLs (set to the public host in prod) |
+| `VITE_API_URL` | No | `""` | Frontend API base; empty = same-origin `/api` (dev proxy / prod nginx) |
 
 ## Demo Video Script (90–120 seconds)
 

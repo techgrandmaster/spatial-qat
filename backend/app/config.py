@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Upload limits
     max_image_size_mb: int = 10
     max_pdf_size_mb: int = 20
+    max_audio_size_mb: int = 10
+
+    # Public URL used to build absolute asset URLs for external model APIs.
+    # Relative /api/v1/assets/... URLs are unreachable from Meta's servers.
+    public_base_url: str = "http://localhost:8000"
 
     # Session
     guest_session_ttl_days: int = 7

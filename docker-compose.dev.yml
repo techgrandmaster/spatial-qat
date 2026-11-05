@@ -6,11 +6,17 @@ services:
   backend:
     volumes:
       - ./backend:/app
-    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      - ./data:/app/data
+    # Runtime image has no `uv` binary — uvicorn ships in /app/.venv/bin.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/spatial_qat
       - MODEL_API_KEY=${MODEL_API_KEY}
       - BUDGET_USD_HARD_CAP=${BUDGET_USD_HARD_CAP:-120.0}
+      - MAX_IMAGE_SIZE_MB=${MAX_IMAGE_SIZE_MB:-10}
+      - MAX_PDF_SIZE_MB=${MAX_PDF_SIZE_MB:-20}
+      - MAX_AUDIO_SIZE_MB=${MAX_AUDIO_SIZE_MB:-10}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-http://localhost:8000}
 
   web:
     build:
@@ -23,4 +29,5 @@ services:
       - /app/node_modules
     command: npm run dev -- --host
     environment:
-      - API_URL=http://localhost:8000
+      # Empty = same-origin /api (vite dev proxy forwards to localhost:8000).
+      - VITE_API_URL=${VITE_API_URL:-}

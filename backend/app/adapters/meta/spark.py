@@ -10,10 +10,10 @@ import logging
 import time
 from uuid import UUID
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
+from app.adapters.meta.http import get_shared_client
 from app.config import settings
 from app.models.schemas import (
     AnswerPayload,
@@ -35,9 +35,29 @@ class MuseSparkAdapter:
         self.model_id = settings.model_spark
 
     def _compute_cache_key(self, operation: str, request_data: dict) -> str:
-        """Compute SHA-256 cache key from operation + canonical request JSON."""
-        canonical = json.dumps({"op": operation, **request_data}, sort_keys=True, default=str)
-        return hashlib.sha256(canonical.encode()).hexdigest()
+        """Bounded SHA-256 key: streams message hashes, no full 1M-ctx JSON dump."""
+        digest = hashlib.sha256()
+        digest.update(operation.encode())
+        digest.update(self.model_id.encode())
+        messages = request_data.get("messages", [])
+        digest.update(str(len(messages)).encode())
+        for msg in messages:
+            if not isinstance(msg, dict):
+                digest.update(str(msg).encode())
+                continue
+            digest.update(str(msg.get("role", "")).encode())
+            content = msg.get("content", "")
+            if not isinstance(content, str):
+                content = json.dumps(content, sort_keys=True, default=str)
+            content_bytes = content.encode()
+            digest.update(str(len(content_bytes)).encode())
+            # Chunked update avoids a second giant concatenated copy.
+            for i in range(0, len(content_bytes), 8192):
+                digest.update(content_bytes[i : i + 8192])
+        extra = {k: v for k, v in request_data.items() if k != "messages"}
+        if extra:
+            digest.update(json.dumps(extra, sort_keys=True, default=str).encode())
+        return digest.hexdigest()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -58,24 +78,13 @@ class MuseSparkAdapter:
         """
         cache_key = self._compute_cache_key(operation, {"messages": messages})
 
-        # Check cache first
+        # Check cache first (SELECT-only; no placeholder row).
         if db:
-            from app.services.budget_guard import record_cost
+            from app.services.budget_guard import find_cached
 
-            cached = await record_cost(
-                db=db,
-                cache_key=cache_key,
-                model=self.model_id,
-                endpoint="/v1/responses",
-                operation=operation,
-                request_json={"messages_count": len(messages)},
-                response_json={},
-                cost_usd=0.0,
-                latency_ms=0,
-                workspace_id=workspace_id,
-            )
+            cached = await find_cached(db, cache_key)
             # If this is a cache hit (record already existed), return cached response
-            if cached.response_json and cached.response_json.get("content"):
+            if cached is not None and cached.response_json and cached.response_json.get("content"):
                 return cached.response_json
 
         # Check if API key is configured
@@ -92,14 +101,14 @@ class MuseSparkAdapter:
             "text": {"format": {"type": "json_object"}},
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                url,
-                json=payload,
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        client = get_shared_client(timeout=60.0)
+        resp = await client.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         latency_ms = int((time.time() - start) * 1000)
 

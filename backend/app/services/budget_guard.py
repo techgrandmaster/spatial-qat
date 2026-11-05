@@ -7,6 +7,7 @@ working at $0.00 cost.
 """
 
 import logging
+import time
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -17,6 +18,12 @@ from app.config import settings
 from app.models.orm import ModelCall
 
 logger = logging.getLogger(__name__)
+
+# Short-TTL spend cache: SUM(cost_usd) over a growing table is the hottest
+# aggregate. 5s staleness bounds overspend to one TTL window while collapsing
+# per-request / per-workspace-fetch SUMs into one query per window.
+_SPEND_CACHE_TTL_SECONDS = 5.0
+_spend_cache: dict[str, tuple[float, float]] = {}
 
 
 class BudgetExceededError(Exception):
@@ -30,11 +37,25 @@ class BudgetExceededError(Exception):
 
 async def get_total_spent(db: AsyncSession, workspace_id: UUID | None = None) -> float:
     """Get total USD spent on model calls, optionally filtered by workspace."""
+    cache_key = f"global:{workspace_id}" if workspace_id is not None else "global:all"
+    now = time.monotonic()
+    cached = _spend_cache.get(cache_key)
+    if cached is not None and (now - cached[0]) < _SPEND_CACHE_TTL_SECONDS:
+        return cached[1]
     stmt = select(func.coalesce(func.sum(ModelCall.cost_usd), 0.0))
     if workspace_id is not None:
         stmt = stmt.where(ModelCall.workspace_id == workspace_id)
     result = await db.execute(stmt)
-    return result.scalar() or 0.0
+    spent = result.scalar() or 0.0
+    _spend_cache[cache_key] = (now, spent)
+    return spent
+
+
+def invalidate_spend_cache(workspace_id: UUID | None = None) -> None:
+    """Drop cached SUMs after recording a cost (keeps the 5s window honest)."""
+    if workspace_id is not None:
+        _spend_cache.pop(f"global:{workspace_id}", None)
+    _spend_cache.pop("global:all", None)
 
 
 async def check_budget(db: AsyncSession, workspace_id: UUID | None = None) -> bool:
@@ -46,6 +67,13 @@ async def check_budget(db: AsyncSession, workspace_id: UUID | None = None) -> bo
     if spent >= settings.budget_usd_hard_cap:
         raise BudgetExceededError(spent, settings.budget_usd_hard_cap)
     return True
+
+
+async def find_cached(db: AsyncSession, cache_key: str) -> ModelCall | None:
+    """SELECT-only cache lookup (no placeholder INSERT — keeps record_cost honest)."""
+    stmt = select(ModelCall).where(ModelCall.cache_key == cache_key)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def record_cost(
@@ -64,16 +92,27 @@ async def record_cost(
     """
     Record a model call with its cost.
     If the cache_key already exists, return the existing record (cache hit).
+    Uses a savepoint so concurrent duplicate inserts resolve to the winner
+    instead of failing the outer transaction.
     """
+    from sqlalchemy.exc import IntegrityError
+
     # Check for cache hit
-    existing_stmt = select(ModelCall).where(ModelCall.cache_key == cache_key)
-    existing_result = await db.execute(existing_stmt)
-    existing = existing_result.scalar_one_or_none()
+    existing = await find_cached(db, cache_key)
     if existing is not None:
-        logger.info("Cache hit for model call: %s", cache_key[:16])
+        # Fill in a placeholder row left by an earlier pre-check-free path.
+        if not existing.response_json and response_json:
+            existing.response_json = response_json
+            existing.cost_usd = cost_usd
+            existing.latency_ms = latency_ms
+            if usage is not None:
+                existing.usage = usage
+            await db.flush()
+        else:
+            logger.info("Cache hit for model call: %s", cache_key[:16])
         return existing
 
-    # Record new call
+    # Record new call (savepoint closes the UNIQUE race between check and insert).
     call = ModelCall(
         workspace_id=workspace_id,
         cache_key=cache_key,
@@ -87,9 +126,19 @@ async def record_cost(
         usage=usage or {},
         cost_usd=cost_usd,
     )
-    db.add(call)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(call)
+            await db.flush()
+    except IntegrityError:
+        # Lost the race: another coroutine inserted the same key first.
+        existing = await find_cached(db, cache_key)
+        if existing is not None:
+            logger.info("Cache race resolved for model call: %s", cache_key[:16])
+            return existing
+        raise
     await db.refresh(call)
+    invalidate_spend_cache(workspace_id)
     return call
 
 

@@ -13,13 +13,23 @@ import logging
 import time
 from uuid import UUID
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
+from app.adapters.meta.http import get_shared_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Global cap: per-instance semaphores never limited concurrent SAM calls.
+_sam_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_sam_semaphore() -> asyncio.Semaphore:
+    global _sam_semaphore
+    if _sam_semaphore is None:
+        _sam_semaphore = asyncio.Semaphore(settings.max_sam_concurrency)
+    return _sam_semaphore
 
 
 class SamAdapter:
@@ -29,11 +39,18 @@ class SamAdapter:
         self.api_key = api_key or settings.model_api_key
         self.base_url = base_url or settings.model_api_base_url
         self.model_id = settings.model_sam
-        self.semaphore = asyncio.Semaphore(settings.max_sam_concurrency)
+        self.semaphore = _get_sam_semaphore()
 
     def _compute_cache_key(self, operation: str, request_data: dict) -> str:
-        canonical = json.dumps({"op": operation, **request_data}, sort_keys=True, default=str)
-        return hashlib.sha256(canonical.encode()).hexdigest()
+        digest = hashlib.sha256()
+        digest.update(operation.encode())
+        digest.update(self.model_id.encode())
+        digest.update(str(request_data.get("prompt", "")).encode())
+        digest.update(str(request_data.get("image", "")).encode())
+        points = request_data.get("points")
+        if points is not None:
+            digest.update(json.dumps(points, sort_keys=True, default=str).encode())
+        return digest.hexdigest()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -50,19 +67,16 @@ class SamAdapter:
     ) -> dict:
         """Call sam-3.1 API with bounded concurrency."""
         async with self.semaphore:
-            cache_key = self._compute_cache_key("segment", {"prompt": prompt, "image": image_url})
+            cache_key = self._compute_cache_key(
+                "segment", {"prompt": prompt, "image": image_url, "points": points}
+            )
 
-            # Check cache
+            # Check cache (SELECT-only; no placeholder row).
             if db:
-                from app.services.budget_guard import record_cost
+                from app.services.budget_guard import find_cached
 
-                cached = await record_cost(
-                    db=db, cache_key=cache_key, model=self.model_id,
-                    endpoint="/v1/responses", operation="segment",
-                    request_json={"prompt": prompt}, response_json={},
-                    cost_usd=0.0, latency_ms=0, workspace_id=workspace_id,
-                )
-                if cached.response_json and cached.response_json.get("polygons"):
+                cached = await find_cached(db, cache_key)
+                if cached is not None and cached.response_json and cached.response_json.get("polygons"):
                     return cached.response_json
 
             if not self.api_key:
@@ -76,14 +90,14 @@ class SamAdapter:
             if points:
                 payload["input"]["points"] = points
 
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"{self.base_url}/responses",
-                    json=payload,
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            client = get_shared_client(timeout=60.0)
+            resp = await client.post(
+                f"{self.base_url}/responses",
+                json=payload,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
             latency_ms = int((time.time() - start) * 1000)
             polygons = data.get("polygons", [])

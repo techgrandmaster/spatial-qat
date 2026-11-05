@@ -6,8 +6,7 @@ POST /v1/asr/transcribe (P0) / wss://.../v1/asr/realtime (P2)
 import logging
 import time
 
-import httpx
-
+from app.adapters.meta.http import get_shared_client
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -30,15 +29,15 @@ class MuseVoiceAdapter:
         start = time.time()
         url = f"{self.base_url}/asr/transcribe"
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                url,
-                files={"file": ("audio.webm", audio_data, content_type)},
-                data={"model": self.model_id},
-                headers={"Authorization": f"Bearer {self.api_key}"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        client = get_shared_client(timeout=60.0)
+        resp = await client.post(
+            url,
+            files={"file": ("audio.webm", audio_data, content_type)},
+            data={"model": self.model_id},
+            headers={"Authorization": f"Bearer {self.api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         latency_ms = int((time.time() - start) * 1000)
         logger.info("Transcription completed in %dms", latency_ms)
