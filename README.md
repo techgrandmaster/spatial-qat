@@ -206,11 +206,8 @@ uv run ruff check .
 
 ## Documentation
 
-- [PRD.md](docs/PRD.md) — Product requirements (FR-01..FR-13)
-- [DEPLOYMENT.md](docs/DEPLOYMENT.md) — Production deployment guide, demo video script, and troubleshooting
 - [EVALUATION_REPORT.md](docs/EVALUATION_REPORT.md) — Ablation & latency metrics
 - [LIMITATIONS.md](docs/LIMITATIONS.md) — Known failure modes
-- [SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md) — Hackathon submission checklist
 
 ## License
 
