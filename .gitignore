@@ -25,6 +25,10 @@ env/
 # Product Requirements Document (internal reference)
 docs/PRD.md
 
+# Deployment & submission artifacts (local-only)
+docs/DEPLOYMENT.md
+docs/SUBMISSION_CHECKLIST.md
+
 # Node.js
 node_modules/
 npm-debug.log*
