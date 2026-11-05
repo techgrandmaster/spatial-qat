@@ -134,6 +134,7 @@ export type RunEventKind =
   | 'message.delta'
   | 'answer.final'
   | 'run.completed'
+  | 'run.failed'
   | 'run.failed';
 
 export interface RunEvent {

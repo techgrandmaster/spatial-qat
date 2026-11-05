@@ -63,8 +63,8 @@ export const VoicePushToTalk: React.FC<VoicePushToTalkProps> = ({
     setRecording(false);
   }, []);
 
-  const sendTranscript = useCallback
-    async (audioBlob: Blob) => {
+  const sendTranscript = useCallback(
+    async (audioBlob: Blob): Promise<void> => {
       setTranscribing(true);
       setError(null);
       try {

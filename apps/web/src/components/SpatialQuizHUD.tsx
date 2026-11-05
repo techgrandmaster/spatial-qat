@@ -1,7 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import {
   PublicAssessment,
-  PublicAssessmentItem,
   AssessmentAttemptResult,
 } from '../api/types';
 
@@ -41,15 +40,6 @@ export const SpatialQuizHUD: React.FC<SpatialQuizHUDProps> = ({
 
   const currentItem = assessment?.items[currentIndex];
 
-  const handleBoardClick = useCallback(
-    (x: number, y: number) => {
-      if (!result) {
-        setClickCoords({ x, y });
-      }
-    },
-    [result],
-  );
-
   const handleSubmit = async () => {
     if (!currentItem || !clickCoords || submitting) return;
     setSubmitting(true);
@@ -80,7 +70,6 @@ export const SpatialQuizHUD: React.FC<SpatialQuizHUDProps> = ({
     );
   }
 
-  const isLocate = currentItem.kind === 'locate';
   const isExplain = currentItem.kind === 'explain';
 
   return (

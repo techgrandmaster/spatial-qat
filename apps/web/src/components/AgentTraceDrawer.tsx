@@ -46,8 +46,8 @@ export const AgentTraceDrawer: React.FC<AgentTraceDrawerProps> = ({
         const data: RunEvent = JSON.parse(e.data);
         setEvents((prev) => [...prev, data]);
 
-        // Extract step info
-        if (data.kind === 'step.started' || data.kind === 'step.completed') {
+        // Extract step info (backend emits step.started; no step.completed event)
+        if (data.kind === 'step.started') {
           const stepData = data.data as Record<string, unknown>;
           const step: AgentStep = {
             seq: (stepData.seq as number) ?? steps.length,

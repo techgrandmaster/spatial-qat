@@ -20,3 +20,43 @@
 {"board": "raspberry-pi-pico", "component_id": "boot-button", "label": "BOOTSEL Button", "polygon": [[[0.15, 0.15], [0.2, 0.15], [0.2, 0.22], [0.15, 0.22], [0.15, 0.15]]], "synonyms": ["bootsel button", "boot button", "bootloader button", "boot"]}
 {"board": "raspberry-pi-pico", "component_id": "gpio-header", "label": "GPIO Header Pins", "polygon": [[[0.15, 0.7], [0.85, 0.7], [0.85, 0.95], [0.15, 0.95], [0.15, 0.7]]], "synonyms": ["gpio header pins", "gpio header", "pin header", "gpio pins"]}
 {"board": "raspberry-pi-pico", "component_id": "led", "label": "Onboard LED", "polygon": [[[0.5, 0.65], [0.53, 0.65], [0.53, 0.68], [0.5, 0.68], [0.5, 0.65]]], "synonyms": ["onboard led", "led", "status led", "built-in led"]}
+{"board": "arduino-uno-r3", "component_id": "power-led", "label": "Power LED", "polygon": [[[0.62, 0.6], [0.65, 0.6], [0.65, 0.63], [0.62, 0.63], [0.62, 0.6]]], "synonyms": ["power led", "green led", "pwr led", "power indicator"]}
+{"board": "arduino-uno-r3", "component_id": "atmega16u2", "label": "ATmega16U2 USB Serial", "polygon": [[[0.3, 0.1], [0.38, 0.1], [0.38, 0.2], [0.3, 0.2], [0.3, 0.1]]], "synonyms": ["atmega16u2 usb serial", "usb serial chip", "16u2", "serial converter"]}
+{"board": "arduino-uno-r3", "component_id": "icsp-header", "label": "ICSP Header", "polygon": [[[0.5, 0.7], [0.62, 0.7], [0.62, 0.78], [0.5, 0.78], [0.5, 0.7]]], "synonyms": ["icsp header", "spi header", "isp header", "programming header"]}
+{"board": "arduino-uno-r3", "component_id": "polyfuse", "label": "Polyfuse PTC", "polygon": [[[0.12, 0.15], [0.17, 0.15], [0.17, 0.22], [0.12, 0.22], [0.12, 0.15]]], "synonyms": ["polyfuse ptc", "resettable fuse", "ptc fuse", "overcurrent fuse"]}
+{"board": "arduino-uno-r3", "component_id": "electrolytic-capacitor", "label": "Electrolytic Capacitor", "polygon": [[[0.08, 0.4], [0.13, 0.4], [0.13, 0.52], [0.08, 0.52], [0.08, 0.4]]], "synonyms": ["electrolytic capacitor", "electrolytic cap", "bulk capacitor", "47uf capacitor"]}
+{"board": "esp32-devkitc", "component_id": "ams1117", "label": "AMS1117 Regulator", "polygon": [[[0.6, 0.3], [0.68, 0.3], [0.68, 0.45], [0.6, 0.45], [0.6, 0.3]]], "synonyms": ["ams1117 regulator", "3.3v regulator", "ldo regulator", "voltage regulator"]}
+{"board": "esp32-devkitc", "component_id": "cp2102", "label": "CP2102 USB Bridge", "polygon": [[[0.15, 0.12], [0.25, 0.12], [0.25, 0.22], [0.15, 0.22], [0.15, 0.12]]], "synonyms": ["cp2102 usb bridge", "usb to uart", "serial bridge", "cp2102"]}
+{"board": "esp32-devkitc", "component_id": "pcb-antenna", "label": "PCB Antenna", "polygon": [[[0.35, 0.62], [0.5, 0.62], [0.5, 0.68], [0.35, 0.68], [0.35, 0.62]]], "synonyms": ["pcb antenna", "trace antenna", "wifi antenna", "antenna"]}
+{"board": "esp32-devkitc", "component_id": "decoupling-capacitor", "label": "Decoupling Capacitor", "polygon": [[[0.58, 0.5], [0.62, 0.5], [0.62, 0.56], [0.58, 0.56], [0.58, 0.5]]], "synonyms": ["decoupling capacitor", "bypass capacitor", "100nf capacitor", "decoupling cap"]}
+{"board": "raspberry-pi-pico", "component_id": "w25q16", "label": "W25Q16 Flash", "polygon": [[[0.72, 0.3], [0.8, 0.3], [0.8, 0.45], [0.72, 0.45], [0.72, 0.3]]], "synonyms": ["w25q16 flash", "spi flash", "2mb flash", "flash chip"]}
+{"board": "raspberry-pi-pico", "component_id": "crystal-12mhz", "label": "12MHz Crystal", "polygon": [[[0.4, 0.5], [0.46, 0.5], [0.46, 0.58], [0.4, 0.58], [0.4, 0.5]]], "synonyms": ["12mhz crystal", "crystal oscillator", "12mhz", "system crystal"]}
+{"board": "raspberry-pi-pico", "component_id": "rt6150", "label": "RT6150 Regulator", "polygon": [[[0.62, 0.5], [0.68, 0.5], [0.68, 0.6], [0.62, 0.6], [0.62, 0.5]]], "synonyms": ["rt6150 regulator", "buck-boost regulator", "power regulator", "3v3 regulator"]}
+{"board": "raspberry-pi-pico", "component_id": "schottky-diode", "label": "Schottky Diode", "polygon": [[[0.2, 0.4], [0.26, 0.4], [0.26, 0.46], [0.2, 0.46], [0.2, 0.4]]], "synonyms": ["schottky diode", "power diode", "ss14 diode", "protection diode"]}
+{"board": "arduino-uno-r3", "question": "What regulates the board down to 5V?", "expected_page": 2, "expected_chunk_ids": ["chunk-uno-04"]}
+{"board": "arduino-uno-r3", "question": "Which chip handles USB to serial conversion?", "expected_page": 2, "expected_chunk_ids": ["chunk-uno-05"]}
+{"board": "arduino-uno-r3", "question": "Where do I connect the ICSP programmer?", "expected_page": 1, "expected_chunk_ids": ["chunk-uno-06"]}
+{"board": "arduino-uno-r3", "question": "What protects the USB port from overcurrent?", "expected_page": 2, "expected_chunk_ids": ["chunk-uno-07"]}
+{"board": "arduino-uno-r3", "question": "Where is the power indicator LED?", "expected_page": 1, "expected_chunk_ids": ["chunk-uno-08"]}
+{"board": "arduino-uno-r3", "question": "What voltage range does the barrel jack accept?", "expected_page": 2, "expected_chunk_ids": ["chunk-uno-09"]}
+{"board": "arduino-uno-r3", "question": "How many analog input pins are exposed?", "expected_page": 1, "expected_chunk_ids": ["chunk-uno-10"]}
+{"board": "arduino-uno-r3", "question": "Where is the main microcontroller located?", "expected_page": 3, "expected_chunk_ids": ["chunk-uno-11"]}
+{"board": "arduino-uno-r3", "question": "What is the ATmega16U2 used for?", "expected_page": 3, "expected_chunk_ids": ["chunk-uno-12"]}
+{"board": "esp32-devkitc", "question": "How do I put the board into download mode?", "expected_page": 1, "expected_chunk_ids": ["chunk-esp-04"]}
+{"board": "esp32-devkitc", "question": "What does the EN button do?", "expected_page": 1, "expected_chunk_ids": ["chunk-esp-05"]}
+{"board": "esp32-devkitc", "question": "Which regulator supplies 3.3V?", "expected_page": 2, "expected_chunk_ids": ["chunk-esp-06"]}
+{"board": "esp32-devkitc", "question": "What USB bridge chip is used?", "expected_page": 2, "expected_chunk_ids": ["chunk-esp-07"]}
+{"board": "esp32-devkitc", "question": "Where is the WiFi antenna?", "expected_page": 3, "expected_chunk_ids": ["chunk-esp-08"]}
+{"board": "esp32-devkitc", "question": "How many GPIO pins are available?", "expected_page": 1, "expected_chunk_ids": ["chunk-esp-09"]}
+{"board": "esp32-devkitc", "question": "What are the decoupling capacitors for?", "expected_page": 3, "expected_chunk_ids": ["chunk-esp-10"]}
+{"board": "esp32-devkitc", "question": "Which USB connector type is fitted?", "expected_page": 1, "expected_chunk_ids": ["chunk-esp-11"]}
+{"board": "esp32-devkitc", "question": "Where is the ESP32-WROOM module?", "expected_page": 3, "expected_chunk_ids": ["chunk-esp-12"]}
+{"board": "raspberry-pi-pico", "question": "How do I enter USB mass-storage mode?", "expected_page": 1, "expected_chunk_ids": ["chunk-pico-04"]}
+{"board": "raspberry-pi-pico", "question": "Which RP2040 peripheral drives the onboard LED?", "expected_page": 3, "expected_chunk_ids": ["chunk-pico-05"]}
+{"board": "raspberry-pi-pico", "question": "Where is the flash memory chip?", "expected_page": 2, "expected_chunk_ids": ["chunk-pico-06"]}
+{"board": "raspberry-pi-pico", "question": "What crystal frequency clocks the RP2040?", "expected_page": 2, "expected_chunk_ids": ["chunk-pico-07"]}
+{"board": "raspberry-pi-pico", "question": "How is 3.3V generated on the board?", "expected_page": 2, "expected_chunk_ids": ["chunk-pico-08"]}
+{"board": "raspberry-pi-pico", "question": "Which button selects boot mode?", "expected_page": 1, "expected_chunk_ids": ["chunk-pico-09"]}
+{"board": "raspberry-pi-pico", "question": "How many GPIO pins break out to the headers?", "expected_page": 1, "expected_chunk_ids": ["chunk-pico-10"]}
+{"board": "raspberry-pi-pico", "question": "What does the Schottky diode protect?", "expected_page": 2, "expected_chunk_ids": ["chunk-pico-11"]}
+{"board": "raspberry-pi-pico", "question": "Where is the USB-C connector?", "expected_page": 1, "expected_chunk_ids": ["chunk-pico-12"]}

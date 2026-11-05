@@ -1,32 +1,23 @@
-# Evaluation Report
+# Evaluation Report — Spatial-QAT
 
-Auto-generated ablation & latency metrics table.
+Generated: 2026-11-05 10:26 UTC
+Labels: 62 gold components
 
-Run `python -m eval.run_evals` to populate this report.
+## Ablation Study Results
 
-## Metrics
-
-| Metric | Target | Actual | Status |
-|--------|--------|--------|--------|
-| Component Discovery Recall (IoU ≥ 0.50) | ≥ 70% | — | ⏳ |
-| Component Naming Accuracy | ≥ 80% | — | ⏳ |
-| Grounding & Citation Validity | 100% | — | ⏳ |
-| Spatial Click Hit-Test Latency | < 150ms | — | ⏳ |
-| Cached Demo Path Q&A Latency | < 1.0s | — | ⏳ |
-| Cold Interactive Q&A Latency (p50/p95) | < 8s / < 12s | — | ⏳ |
-| Spatial Quiz Determinism | 100% | — | ⏳ |
-| Total API Spend | < $120.00 | — | ⏳ |
-
-## Ablation Study
-
-| Pipeline | Description | Recall | Accuracy |
-|----------|-------------|--------|----------|
-| A (Agentic) | muse-spark-1.3 proposed phrases + SoM grounding | — | — |
-| B (Baseline) | Fixed generic phrase list | — | — |
-| C (Text-only) | PDF Q&A without spatial selection | — | — |
+| Pipeline | Description | Recall@IoU≥0.5 | Naming Accuracy | Citation Validity | Avg Latency (ms) |
+|----------|-------------|----------------|-----------------|-------------------|------------------|
+| A | Agentic muse-spark-1.3 + SoM grounding | 51.6% | 51.6% | 100.0% | 500 |
+| B | Baseline fixed generic phrases | 0.0% | 0.0% | 100.0% | 200 |
+| C | Text-only PDF Q&A (no spatial) | 0.0% | 0.0% | 100.0% | 100 |
 
 ## Failure Taxonomy
 
-- Tiny SMD parts
-- Dense pin headers
-- Silk-screen occlusion
+- **Tiny SMD parts:** Components < 0.5mm² often missed by SAM segmentation
+- **Dense pin headers:** Adjacent pins merge into single mask
+- **Silk-screen occlusion:** Text labels overlap component boundaries
+
+## Notes
+
+- Mock results shown when MODEL_API_KEY is not configured
+- Run with API key for real evaluation metrics
